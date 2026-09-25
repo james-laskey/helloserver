@@ -1,0 +1,292 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============== USER AUTHENTICATION ==============
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+
+  // Relations
+  userPreferences UserPreferences?
+  userStats       UserStats[]
+  authSessions    AuthSession[]
+  flashcardSets   FlashcardSet[]
+  quizAttempts    QuizAttempt[]
+  sessions        Session[]
+
+  @@map("users")
+}
+
+// ============== USER PREFERENCES (from questionnaire) ==============
+
+model UserPreferences {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Language preferences
+  targetLanguage String // Language they want to learn
+  nativeLanguage String // Their native language
+
+  // Proficiency (1-10 scale)
+  proficiencyLevel       Int // 1-10
+  proficiencyDescription String? // Store the description of their level
+
+  // Learning goals (stored as JSON array)
+  learningGoals Json // e.g., ["conversation", "grammar", "vocabulary"]
+
+  // Learning style preference
+  learningStyle String? // "Visual", "Auditory", "Reading/Writing", "Kinesthetic"
+
+  // Additional preferences
+  preferredSpeechRate Float? // Custom speech rate (0.5-1.5)
+  preferredPitch      Float? // Custom pitch (0.5-2.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+// ============== AUTHENTICATION SESSIONS (for JWT refresh tokens) ==============
+
+model AuthSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  refreshToken String   @unique
+  expiresAt    DateTime
+
+  userAgent String? // Browser/device info
+  ipAddress String? // IP address of the request
+
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+// ============== SESSIONS ==============
+
+model Session {
+  id        String @id @default(cuid())
+  sessionId String @unique
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Session details
+  language     String
+  topicId      String?
+  topicName    String?
+  topicConcept String?
+
+  // User preferences at time of session
+  systemPrompt     String? @db.Text
+  nativeLanguage   String?
+  proficiencyLevel Int?
+  learningGoals    Json?
+
+  // Timing
+  startTime       DateTime  @default(now())
+  endTime         DateTime?
+  durationSeconds Int       @default(0)
+  messageCount    Int       @default(0)
+
+  // Status
+  status String @default("active") // active, completed, abandoned
+
+  // Relations
+  messages Message[]
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([language])
+  @@index([status])
+  @@map("sessions")
+}
+
+// ============== MESSAGES ==============
+
+model Message {
+  id        String  @id @default(cuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+
+  role      String // "user" or "assistant"
+  content   String   @db.Text
+  timestamp DateTime @default(now())
+
+  tokensUsed Int? // Number of tokens in this message
+
+  @@index([sessionId])
+  @@index([timestamp])
+  @@map("messages")
+}
+
+// ============== USER STATISTICS (MERGED with LearningProgress) ==============
+
+model UserStats {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  language String
+
+  // Quiz stats
+  quizzesCompleted Int   @default(0)
+  averageQuizScore Float @default(0)
+
+  // Flashcard stats
+  flashcardsStudied  Int @default(0)
+  flashcardsMastered Int @default(0)
+
+  // Session stats
+  totalSessions        Int @default(0)
+  totalDurationSeconds Int @default(0)
+  totalMessages        Int @default(0)
+
+  // Activity tracking
+  lastActivity DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, language])
+  @@map("user_stats")
+}
+
+// ============== FLASHCARDS ==============
+
+model FlashcardSet {
+  id            String    @id @default(cuid())
+  userId        String
+  topicId       String
+  topicName     String
+  language      String
+  title         String
+  description   String?
+  cards         Json // Type: Array<{front: string, back: string, example: string}>
+  createdAt     DateTime  @default(now())
+  lastReviewed  DateTime?
+  timesReviewed Int       @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, topicId])
+  @@map("flashcard_sets")
+}
+
+// ============== QUIZZES ==============
+
+model QuizAttempt {
+  id             String   @id @default(cuid())
+  userId         String
+  topicId        String
+  topicName      String
+  language       String
+  title          String
+  questions      Json // Type: Array<{question: string, options: string[], correctAnswer: string, explanation: string}>
+  userAnswers    Json? // Type: string[]
+  score          Int? // Percentage score
+  totalQuestions Int
+  correctCount   Int      @default(0)
+  timeSpent      Int? // Seconds spent
+  completedAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, topicId])
+  @@map("quiz_attempts")
+}
+
+// Beta Testing Models
+
+model BetaTester {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  name        String?
+  deviceType  String? // iOS, Android, Both
+  deviceModel String?
+  osVersion   String?
+  invitedAt   DateTime  @default(now())
+  joinedAt    DateTime?
+  status      String    @default("pending") // pending, active, inactive, removed
+  notes       String?   @db.Text
+
+  bugReports BugReport[]
+  feedback   BetaFeedback[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("beta_testers")
+}
+
+model BugReport {
+  id           String     @id @default(cuid())
+  betaTesterId String
+  betaTester   BetaTester @relation(fields: [betaTesterId], references: [id], onDelete: Cascade)
+
+  title          String
+  description    String  @db.Text
+  steps          String? @db.Text // Steps to reproduce
+  expectedResult String? @db.Text
+  actualResult   String? @db.Text
+  severity       String  @default("medium") // low, medium, high, critical
+  status         String  @default("open") // open, in-progress, resolved, closed
+  deviceInfo     String? @db.Text
+  appVersion     String?
+  screenshots    Json? // Array of screenshot URLs
+
+  resolvedAt DateTime?
+  resolvedBy String?
+  resolution String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([betaTesterId])
+  @@index([status])
+  @@index([severity])
+  @@map("bug_reports")
+}
+
+model BetaFeedback {
+  id           String     @id @default(cuid())
+  betaTesterId String
+  betaTester   BetaTester @relation(fields: [betaTesterId], references: [id], onDelete: Cascade)
+
+  rating   Int? // 1-5
+  feedback String  @db.Text
+  category String // general, feature-request, usability, performance, crash
+  resolved Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([betaTesterId])
+  @@index([category])
+  @@map("beta_feedback")
+}
+
+model BetaInvite {
+  id        String    @id @default(cuid())
+  email     String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@map("beta_invites")
+}
